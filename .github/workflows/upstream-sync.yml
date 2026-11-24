@@ -67,21 +67,9 @@ jobs:
           platforms: linux/amd64
           load: true
           tags: aaapkbuilder:upstream-candidate
-      - name: Smoke test candidate
+      - name: Smoke test candidate authentication health and toolchain
         if: steps.upstream.outputs.changed == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker run -d --name upstream-smoke -p 127.0.0.1:4173:4173 aaapkbuilder:upstream-candidate
-          trap 'docker logs upstream-smoke; docker rm -f upstream-smoke' EXIT
-          for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:4173/api/health; then break; fi
-            sleep 3
-          done
-          curl -fsS http://127.0.0.1:4173/api/health
-          docker exec upstream-smoke java -jar /app/tools/apktool.jar --version
-          docker exec upstream-smoke java -jar /app/tools/apksigner.jar version
-          docker exec upstream-smoke sh -c 'test -x /app/tools/zipalign && command -v keytool && command -v adb'
+        run: bash scripts/smoke.sh aaapkbuilder:upstream-candidate
       - name: Commit tested snapshot and request GHCR build
         if: steps.upstream.outputs.changed == 'true'
         env:

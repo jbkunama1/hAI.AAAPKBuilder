@@ -71,20 +71,8 @@ jobs:
           tags: aaapkbuilder:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Smoke test health and toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker run -d --name aaapk-smoke -p 127.0.0.1:4173:4173 aaapkbuilder:test
-          trap 'docker logs aaapk-smoke; docker rm -f aaapk-smoke' EXIT
-          for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:4173/api/health; then break; fi
-            sleep 3
-          done
-          curl -fsS http://127.0.0.1:4173/api/health
-          docker exec aaapk-smoke java -jar /app/tools/apktool.jar --version
-          docker exec aaapk-smoke java -jar /app/tools/apksigner.jar version
-          docker exec aaapk-smoke sh -c 'test -x /app/tools/zipalign && command -v keytool && command -v adb'
+      - name: Smoke test authentication health and toolchain
+        run: bash scripts/smoke.sh aaapkbuilder:test
       - name: Publish tested image
         if: github.event_name != 'pull_request'
         uses: docker/build-push-action@v6
