@@ -4,6 +4,8 @@ services:
     platform: linux/amd64
     restart: unless-stopped
     init: true
+    networks:
+      - highfishNetwork
     ports:
       - '${BIND_IP:-127.0.0.1}:${APP_PORT:-4173}:4173'
     environment:
@@ -30,3 +32,7 @@ volumes:
   aaapk_work:
   aaapk_keys:
   aaapk_framework:
+networks:
+  highfishNetwork:
+    external: true
+    name: highfishNetwork
