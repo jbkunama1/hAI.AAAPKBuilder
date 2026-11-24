@@ -1,0 +1,32 @@
+services:
+  aaapkbuilder:
+    image: ghcr.io/jbkunama1/hai.aaapkbuilder:${IMAGE_TAG:-latest}
+    platform: linux/amd64
+    restart: unless-stopped
+    init: true
+    ports:
+      - '${BIND_IP:-127.0.0.1}:${APP_PORT:-4173}:4173'
+    environment:
+      HOST: 0.0.0.0
+      PORT: '4173'
+      TZ: Europe/Berlin
+      JAVA_TOOL_OPTIONS: '-Xmx1024m'
+    volumes:
+      - aaapk_work:/app/work
+      - aaapk_keys:/app/tools/keys
+      - aaapk_framework:/app/tools/framework
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    mem_limit: 2g
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+volumes:
+  aaapk_work:
+  aaapk_keys:
+  aaapk_framework:
