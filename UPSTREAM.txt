@@ -1,0 +1,3 @@
+Source: https://github.com/malebuffy/AndroidAutoMaker
+Commit: 9b83522e57ee35eadb9e779dcdf19a7266751ae1
+License: GPL-3.0-only; retain upstream notices and third-party licenses.
