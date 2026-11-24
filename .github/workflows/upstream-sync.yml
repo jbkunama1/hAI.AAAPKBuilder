@@ -1,0 +1,111 @@
+name: Daily upstream sync
+on:
+  schedule:
+    - cron: '37 3 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+concurrency:
+  group: ghcr-refs/heads/main
+  cancel-in-progress: false
+jobs:
+  sync:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Resolve upstream HEAD
+        id: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha=$(git ls-remote https://github.com/malebuffy/AndroidAutoMaker.git HEAD | awk '{print $1}')
+          [[ $sha =~ ^[0-9a-f]{40}$ ]]
+          previous=$(sed -n 's/^Commit: //p' UPSTREAM.txt 2>/dev/null || true)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          if [ "$sha" = "$previous" ]; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            echo "Upstream already current: $sha" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Download and stage upstream snapshot
+        if: steps.upstream.outputs.changed == 'true'
+        env:
+          UPSTREAM_SHA: ${{ steps.upstream.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          staging=$(mktemp -d)
+          trap 'rm -rf "$staging"' EXIT
+          curl --fail --location --retry 3 "https://codeload.github.com/malebuffy/AndroidAutoMaker/tar.gz/$UPSTREAM_SHA" -o "$staging/source.tar.gz"
+          mkdir "$staging/source"
+          tar -xzf "$staging/source.tar.gz" --strip-components=1 -C "$staging/source"
+          test -s "$staging/source/LICENSE"
+          test -s "$staging/source/server.js"
+          test -s "$staging/source/package-lock.json"
+          if [ -f LICENSE ]; then
+            cmp LICENSE "$staging/source/LICENSE" || { echo 'License changed; manual review required.'; exit 1; }
+          fi
+          mkdir -p upstream
+          rsync -a --delete "$staging/source/" upstream/
+          cp upstream/LICENSE LICENSE
+          printf '%s\n' 'Source: https://github.com/malebuffy/AndroidAutoMaker' "Commit: $UPSTREAM_SHA" 'License: GPL-3.0-only; retain upstream notices and third-party licenses.' > UPSTREAM.txt
+          git add --all -- upstream LICENSE UPSTREAM.txt
+      - uses: docker/setup-buildx-action@v3
+        if: steps.upstream.outputs.changed == 'true'
+      - name: Build candidate without registry credentials
+        if: steps.upstream.outputs.changed == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: aaapkbuilder:upstream-candidate
+      - name: Smoke test candidate
+        if: steps.upstream.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name upstream-smoke -p 127.0.0.1:4173:4173 aaapkbuilder:upstream-candidate
+          trap 'docker logs upstream-smoke; docker rm -f upstream-smoke' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4173/api/health; then break; fi
+            sleep 3
+          done
+          curl -fsS http://127.0.0.1:4173/api/health
+          docker exec upstream-smoke java -jar /app/tools/apktool.jar --version
+          docker exec upstream-smoke java -jar /app/tools/apksigner.jar version
+          docker exec upstream-smoke sh -c 'test -x /app/tools/zipalign && command -v keytool && command -v adb'
+      - name: Commit tested snapshot and request GHCR build
+        if: steps.upstream.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_SHA: ${{ steps.upstream.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m "chore: sync tested upstream $UPSTREAM_SHA"
+          gh auth setup-git
+          git push origin HEAD:main
+          gh workflow run ghcr.yml --repo "$GITHUB_REPOSITORY" --ref main
+          echo "Integrated upstream $UPSTREAM_SHA; requested GHCR build." >> "$GITHUB_STEP_SUMMARY"
+      - name: Retry missing GHCR dispatch on unchanged upstream
+        if: steps.upstream.outputs.changed == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          head=$(git rev-parse HEAD)
+          count=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ghcr.yml/runs?head_sha=$head&per_page=1" --jq '.total_count')
+          if [ "$count" = 0 ]; then
+            gh workflow run ghcr.yml --repo "$GITHUB_REPOSITORY" --ref main
+          fi
